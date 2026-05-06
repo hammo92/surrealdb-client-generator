@@ -1,6 +1,6 @@
 import { toUpperCamelCase } from '../helper/toUpperCamelCase.js'
 
-export const getDeleteEntityFileContent = (lib: string, entityName: string) => {
+export const getDeleteEntityFileContent = (lib: string, entityName: string, _sdkVersion: 1 | 2 = 1) => {
 	const entityNameFirstUpper = `${toUpperCamelCase(entityName)}`
 	const entityTypeName = `${toUpperCamelCase(entityName)}`
 

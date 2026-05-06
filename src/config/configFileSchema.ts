@@ -10,4 +10,6 @@ export const configFileSchema = z.object({
 	outputFolder: z.string().default('client_generated'),
 	generateClient: z.boolean().default(true),
 	surrealImage: z.string().default('surrealdb/surrealdb:latest'),
+	sdkVersion: z.union([z.literal(1), z.literal(2)]).default(1),
+	surrealdbVersion: z.union([z.literal(2), z.literal(3)]).default(2),
 })

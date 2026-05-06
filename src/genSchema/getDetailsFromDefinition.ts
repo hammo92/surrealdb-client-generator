@@ -164,6 +164,16 @@ export const getZodTypeFromQLType = (
 
 	if (typeStringToProcess.includes('|')) {
 		const unionParts = typeStringToProcess.split('|').map(part => part.trim())
+		const nullableUnionParts = unionParts.filter(part => ['none', 'null'].includes(part.toLowerCase()))
+		if (nullableUnionParts.length && nullableUnionParts.length < unionParts.length) {
+			const nonNullableParts = unionParts.filter(part => !['none', 'null'].includes(part.toLowerCase()))
+			const schemas = nonNullableParts.map(part => {
+				const partTokens: TokenizedDefinition = { ...tokens, type: part }
+				return getZodTypeFromQLType(partTokens, isInputSchema)
+			})
+			const schema = schemas.length === 1 ? schemas[0] : `z.union([${schemas.join(', ')}])`
+			return schema.endsWith('.optional()') ? schema : `${schema}.optional()`
+		}
 
 		// Check for quoted string literals (enum values)
 		const allLiterals = unionParts.every(
@@ -318,7 +328,10 @@ export const getZodTypeFromQLType = (
 }
 
 export const shouldFieldBeSkipped = (tokens: TokenizedDefinition, isInputSchema: boolean): boolean => {
-	return !!tokens.value?.trim().toLowerCase().startsWith('<future>') && isInputSchema
+	if (!isInputSchema) return false
+	if (tokens.value?.trim().toLowerCase().startsWith('<future>')) return true
+	if (tokens.computed !== undefined) return true
+	return false
 }
 
 export const getDetailsFromDefinition = (definition: string, isInputSchema: boolean): FieldDetail => {

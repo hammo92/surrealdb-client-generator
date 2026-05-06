@@ -6,9 +6,9 @@ describe('handleAssertions', () => {
 			expect(handleAssertions('z.string()', 'string::is::email()', 'string')).toBe('z.string().email()')
 			expect(handleAssertions('z.string()', 'string::is::url()', 'string')).toBe('z.string().url()')
 			expect(handleAssertions('z.string()', 'string::is::uuid()', 'string')).toBe('z.string().uuid()')
-			expect(handleAssertions('z.string()', 'string::is::ip()', 'string')).toBe('z.string().ip()')
-			expect(handleAssertions('z.string()', 'string::is::ipv4()', 'string')).toBe('z.string().ip({ version: "v4" })')
-			expect(handleAssertions('z.string()', 'string::is::ipv6()', 'string')).toBe('z.string().ip({ version: "v6" })')
+			expect(handleAssertions('z.string()', 'string::is::ip()', 'string')).toContain('Invalid IP address')
+			expect(handleAssertions('z.string()', 'string::is::ipv4()', 'string')).toContain('Invalid IPv4 address')
+			expect(handleAssertions('z.string()', 'string::is::ipv6()', 'string')).toContain('Invalid IPv6 address')
 			expect(handleAssertions('z.string()', 'string::is::datetime()', 'string')).toBe('z.string().datetime()')
 		})
 
@@ -89,6 +89,19 @@ describe('handleAssertions', () => {
 				expect(handleAssertions('z.number()', '= 50', 'number')).toBe('z.literal(50)')
 				expect(handleAssertions('z.number()', '== 90', 'number')).toBe('z.literal(90)')
 			})
+
+			it('handles IN/INSIDE numeric enum assertions', () => {
+				expect(handleAssertions('z.number()', 'IN [1, 2, 3]', 'number')).toBe(
+					'z.union([z.literal(1), z.literal(2), z.literal(3)])',
+				)
+				expect(handleAssertions('z.number()', 'INSIDE [10]', 'number')).toBe('z.literal(10)')
+			})
+
+			it('filters NONE/NULL and preserves numeric literals in numeric enum assertions', () => {
+				expect(handleAssertions('z.number()', 'IN [NONE, NULL, 1, 2.5, -3]', 'number')).toBe(
+					'z.union([z.literal(1), z.literal(2.5), z.literal(-3)])',
+				)
+			})
 		})
 
 		describe('Date assertions', () => {
@@ -125,6 +138,76 @@ describe('handleAssertions', () => {
 				expect(() => handleAssertions('z.array(z.unknown())', 'ALLINSIDE', 'array')).toThrow(
 					'Invalid ALLINSIDE assertion',
 				)
+			})
+		})
+
+		describe('V3 function name syntax (underscore)', () => {
+			it('handles string::is_email', () => {
+				expect(handleAssertions('z.string()', 'string::is_email($value)', 'string')).toBe('z.string().email()')
+			})
+
+			it('handles string::is_url', () => {
+				expect(handleAssertions('z.string()', 'string::is_url($value)', 'string')).toBe('z.string().url()')
+			})
+
+			it('handles string::is_uuid', () => {
+				expect(handleAssertions('z.string()', 'string::is_uuid($value)', 'string')).toBe('z.string().uuid()')
+			})
+
+			it('handles string::is_ip', () => {
+				expect(handleAssertions('z.string()', 'string::is_ip($value)', 'string')).toContain('Invalid IP address')
+			})
+
+			it('handles string::is_ipv4', () => {
+				expect(handleAssertions('z.string()', 'string::is_ipv4($value)', 'string')).toContain('Invalid IPv4 address')
+			})
+
+			it('handles string::is_ipv6', () => {
+				expect(handleAssertions('z.string()', 'string::is_ipv6($value)', 'string')).toContain('Invalid IPv6 address')
+			})
+
+			it('handles string::is_datetime', () => {
+				expect(handleAssertions('z.string()', 'string::is_datetime($value)', 'string')).toBe('z.string().datetime()')
+			})
+
+			it('handles string::is_alphanum', () => {
+				expect(handleAssertions('z.string()', 'string::is_alphanum($value)', 'string')).toBe(
+					'z.string().regex(/^[a-zA-Z0-9]*$/)',
+				)
+			})
+
+			it('handles string::is_alpha', () => {
+				expect(handleAssertions('z.string()', 'string::is_alpha($value)', 'string')).toBe(
+					'z.string().regex(/^[a-zA-Z]*$/)',
+				)
+			})
+
+			it('handles string::is_numeric', () => {
+				expect(handleAssertions('z.string()', 'string::is_numeric($value)', 'string')).toBe(
+					'z.string().regex(/^[0-9]*$/)',
+				)
+			})
+
+			it('handles string::is_semver', () => {
+				expect(handleAssertions('z.string()', 'string::is_semver($value)', 'string')).toBe(
+					'z.string().regex(/^(0|[1-9][0-9]*).(0|[1-9][0-9]*).(0|[1-9][0-9]*)(-(0|[1-9A-Za-z-][0-9A-Za-z-]*)(.[0-9A-Za-z-]+)*)?(+[0-9A-Za-z-]+(.[0-9A-Za-z-]+)*)?$/)',
+				)
+			})
+
+			it('handles string::is_hexadecimal', () => {
+				expect(handleAssertions('z.string()', 'string::is_hexadecimal($value)', 'string')).toBe(
+					'z.string().regex(/^[0-9a-fA-F]*$/)',
+				)
+			})
+
+			it('handles string::is_ascii', () => {
+				expect(handleAssertions('z.string()', 'string::is_ascii($value)', 'string')).toBe(
+					'z.string().regex(/^[\x00-\x7F]*$/)',
+				)
+			})
+
+			it('V2 syntax still works alongside V3', () => {
+				expect(handleAssertions('z.string()', 'string::is::email()', 'string')).toBe('z.string().email()')
 			})
 		})
 
@@ -222,6 +305,18 @@ describe('handleAssertions', () => {
 			it('handles NONE check prefix in number assertions', () => {
 				expect(handleAssertions('z.number()', '$value = NONE OR ($value >= 0 AND $value <= 100)', 'number')).toBe(
 					'z.number().min(0).max(100)',
+				)
+			})
+
+			it('handles multiple NONE/NULL prefixes in string enum assertions', () => {
+				expect(
+					handleAssertions('z.string()', "$value = NONE OR $value = NULL OR $value IN ['open', 'closed']", 'string'),
+				).toBe("z.enum(['open', 'closed'])")
+			})
+
+			it('handles multiple NONE/NULL prefixes in numeric enum assertions', () => {
+				expect(handleAssertions('z.number()', '$value = NONE OR $value = NULL OR $value IN [1, 2, 3]', 'number')).toBe(
+					'z.union([z.literal(1), z.literal(2), z.literal(3)])',
 				)
 			})
 		})

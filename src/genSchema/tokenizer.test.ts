@@ -500,4 +500,43 @@ describe('Field schema generation', () => {
 			expect(getZodTypeFromQLType(result, false)).toBe('z.array(z.string())')
 		})
 	})
+
+	describe('COMPUTED fields', () => {
+		it('parses COMPUTED clause with simple expression', () => {
+			const query = 'DEFINE FIELD fullName ON TABLE user TYPE string COMPUTED string::concat(firstName, " ", lastName)'
+			const result = tokenize(query)
+
+			expect(result.name).toBe('fullName')
+			expect(result.table).toBe('user')
+			expect(result.type).toBe('string')
+			expect(result.computed).toBe('string::concat(firstName, " ", lastName)')
+		})
+
+		it('parses COMPUTED clause without TYPE', () => {
+			const query = 'DEFINE FIELD total ON TABLE order COMPUTED price * quantity'
+			const result = tokenize(query)
+
+			expect(result.name).toBe('total')
+			expect(result.table).toBe('order')
+			expect(result.computed).toBe('price * quantity')
+		})
+
+		it('parses COMPUTED clause with other clauses', () => {
+			const query =
+				'DEFINE FIELD age ON TABLE user TYPE number COMPUTED time::now() - birthday COMMENT "calculated age"'
+			const result = tokenize(query)
+
+			expect(result.name).toBe('age')
+			expect(result.type).toBe('number')
+			expect(result.computed).toBe('time::now() - birthday')
+			expect(result.comment).toBe('"calculated age"')
+		})
+
+		it('field without COMPUTED has no computed property', () => {
+			const query = 'DEFINE FIELD name ON TABLE user TYPE string'
+			const result = tokenize(query)
+
+			expect(result.computed).toBeUndefined()
+		})
+	})
 })

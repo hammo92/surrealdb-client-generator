@@ -23,7 +23,12 @@ const createIndexFile = (directory: string, files: string[]) => {
 	writeFileSync(resolve(directory, 'index.ts'), indexContent)
 }
 
-export const generateClientJs = async (outputFolder: string, tableNames: string[], lib: string) => {
+export const generateClientJs = async (
+	outputFolder: string,
+	tableNames: string[],
+	lib: string,
+	sdkVersion: 1 | 2 = 1,
+) => {
 	const clientFolder = resolve(outputFolder, 'client')
 	await mkdirp(clientFolder)
 
@@ -45,23 +50,23 @@ export const generateClientJs = async (outputFolder: string, tableNames: string[
 			},
 			{
 				fileName: `create${tableNameFirstUpper}.ts`,
-				content: () => getCreateEntityFileContent(lib, tableName, name),
+				content: () => getCreateEntityFileContent(lib, tableName, name, sdkVersion),
 			},
 			{
 				fileName: `update${tableNameFirstUpper}.ts`,
-				content: () => getUpdateEntityFileContent(lib, tableName),
+				content: () => getUpdateEntityFileContent(lib, tableName, sdkVersion),
 			},
 			{
 				fileName: `delete${tableNameFirstUpper}.ts`,
-				content: () => getDeleteEntityFileContent(lib, tableName),
+				content: () => getDeleteEntityFileContent(lib, tableName, sdkVersion),
 			},
 			{
 				fileName: `getAll${tableNameFirstUpper}s.ts`,
-				content: () => getAllEntityFileContent(lib, tableName, name),
+				content: () => getAllEntityFileContent(lib, tableName, name, sdkVersion),
 			},
 			{
 				fileName: `get${tableNameFirstUpper}ById.ts`,
-				content: () => getByIdEntityFileContent(lib, tableName),
+				content: () => getByIdEntityFileContent(lib, tableName, sdkVersion),
 			},
 		]
 

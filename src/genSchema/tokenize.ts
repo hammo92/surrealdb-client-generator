@@ -1,4 +1,14 @@
-const FIELD_CLAUSES = ['TYPE', 'REFERENCE', 'DEFAULT', 'READONLY', 'VALUE', 'ASSERT', 'PERMISSIONS', 'COMMENT'] as const
+const FIELD_CLAUSES = [
+	'TYPE',
+	'REFERENCE',
+	'DEFAULT',
+	'READONLY',
+	'VALUE',
+	'ASSERT',
+	'PERMISSIONS',
+	'COMMENT',
+	'COMPUTED',
+] as const
 
 const PATTERNS = {
 	CLAUSE_BOUNDARY: `\\s+(?:${FIELD_CLAUSES.join('|')})\\s+|$`,
@@ -29,6 +39,7 @@ export interface TokenizedDefinition {
 	permissions?: Permissions
 	reference?: string
 	comment?: string
+	computed?: string
 }
 
 function findNextClause(str: string, startIndex: number): number {
@@ -171,6 +182,11 @@ export const tokenize = (originalDefinition: string): TokenizedDefinition => {
 	const commentMatch = currentDefinitionSegment.match(PATTERNS.CAPTURE_UNTIL_NEXT_CLAUSE('COMMENT'))
 	if (commentMatch?.[1]) {
 		result.comment = commentMatch[1].trim().replace(/;$/, '').trim()
+	}
+
+	const computedMatch = currentDefinitionSegment.match(PATTERNS.CAPTURE_UNTIL_NEXT_CLAUSE('COMPUTED'))
+	if (computedMatch?.[1]) {
+		result.computed = computedMatch[1].trim().replace(/;$/, '').trim()
 	}
 
 	return result

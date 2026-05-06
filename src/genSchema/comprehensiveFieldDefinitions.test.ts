@@ -289,6 +289,22 @@ describe('Comprehensive Field Definition Tests', () => {
 			expect(schema).toContain('.default(0)')
 		})
 
+		it('should handle SurrealDB 3 suffixed numeric default values', () => {
+			const fields = [
+				getDetailsFromDefinition('DEFINE FIELD confidence ON TABLE review TYPE float DEFAULT 0.5f;', false),
+				getDetailsFromDefinition('DEFINE FIELD multiplier ON TABLE review TYPE decimal DEFAULT 1.5dec;', false),
+			]
+			const schema = generateZodSchemaCode(fields, 'reviewSchema')
+			expect(schema).toContain('confidence: z.number().default(0.5)')
+			expect(schema).toContain('multiplier: z.number().default(1.5)')
+		})
+
+		it('should preserve quoted numeric string default values', () => {
+			const fields = [getDetailsFromDefinition('DEFINE FIELD version ON TABLE content TYPE string DEFAULT "1.0";', false)]
+			const schema = generateZodSchemaCode(fields, 'contentSchema')
+			expect(schema).toContain('.default("1.0")')
+		})
+
 		it('should handle boolean default values', () => {
 			const fields = [getDetailsFromDefinition('DEFINE FIELD active ON TABLE user TYPE bool DEFAULT true;', false)]
 			const schema = generateZodSchemaCode(fields, 'userSchema')

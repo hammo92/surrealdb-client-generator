@@ -40,7 +40,12 @@ const createIndexFile = async (directory: string, files: string[]): Promise<void
 	await fs.writeFile(resolve(directory, 'index.ts'), indexContent)
 }
 
-export const generateTableSchema = async (outFolder: string, tableInfo: Record<string, string>): Promise<void> => {
+export const generateTableSchema = async (
+	outFolder: string,
+	tableInfo: Record<string, string>,
+	sdkVersion: 1 | 2 = 1,
+	lib = 'surrealdb',
+): Promise<void> => {
 	try {
 		await mkdirp(outFolder)
 
@@ -48,7 +53,7 @@ export const generateTableSchema = async (outFolder: string, tableInfo: Record<s
 
 		console.log('Generating schema in', genSchemaFolder)
 
-		await ensureRecordSchema(genSchemaFolder)
+		await ensureRecordSchema(genSchemaFolder, lib, sdkVersion)
 
 		const generatedFiles: string[] = []
 
@@ -97,7 +102,7 @@ export ${outputFields};
 
 import { z } from "zod";
 
-import { ${tableName}InputSchemaGen, ${tableName}OutputSchemaGen } from "../../_generated/index.js";
+import { ${tableName}InputSchemaGen, ${tableName}OutputSchemaGen } from "../../_generated/${tableName}/${tableName}SchemaGen.js";
 import { recordId } from "../../_generated/recordSchema.js";
 
 // payload schema for creating a new ${name} entity
@@ -127,7 +132,7 @@ export const ${tableName}Schema = ${tableName}OutputSchemaGen.merge(z.object({
 				const typeFileContent = `/* Place your custom changes here */
 
 import { z } from "zod";
-import { type RecordId} from "surrealdb";
+import { type RecordId} from "${lib}";
 
 import { ${tableName}CreateSchema, ${tableName}Schema } from "./${tableName}Schema.js";
 

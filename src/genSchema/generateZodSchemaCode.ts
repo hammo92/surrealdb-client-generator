@@ -9,6 +9,14 @@ const createArraySuffixRegex = (key: string) => {
 	return new RegExp(`(?<!${escapedKey})(\\[\\*\\]|\\.\\*)`, 'g')
 }
 
+const isQuotedStringLiteral = (value: string) =>
+	(value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))
+
+const normalizeNumericDefault = (value: string) => {
+	const numericMatch = value.match(/^(-?\d+(?:\.\d+)?)(?:f|dec)?$/i)
+	return numericMatch?.[1]
+}
+
 export const generateZodSchemaCode = (fields: FieldDetail[], schemaName: string): string => {
 	// biome-ignore lint/suspicious/noExplicitAny: ok here
 	const buildSchema = (fieldMap: { [key: string]: any }, fields: FieldDetail[]) => {
@@ -51,18 +59,21 @@ export const generateZodSchemaCode = (fields: FieldDetail[], schemaName: string)
 						if (defaultValue === 'ALWAYS' || defaultValue.startsWith('ALWAYS ')) {
 							continue
 						}
+						const isQuoted = isQuotedStringLiteral(defaultValue)
 						const sanitizedDefault = defaultValue.replace(/^["']|["']$/g, '')
+						const numericDefault = !isQuoted ? normalizeNumericDefault(sanitizedDefault) : undefined
 						if (
 							sanitizedDefault === '[]' ||
 							sanitizedDefault === '{}' ||
 							sanitizedDefault === 'null' ||
 							sanitizedDefault === 'true' ||
 							sanitizedDefault === 'false' ||
-							/^-?\d+(\.\d+)?$/.test(sanitizedDefault) ||
 							sanitizedDefault.startsWith('[') ||
 							sanitizedDefault.startsWith('{')
 						) {
 							zodString += `.default(${sanitizedDefault})`
+						} else if (numericDefault !== undefined) {
+							zodString += `.default(${numericDefault})`
 						} else {
 							zodString += `.default("${sanitizedDefault.replace(/"/g, '\\"')}")`
 						}

@@ -12,6 +12,11 @@
 - Choose to generate only zod schemas or include a basic TypeScript client.
 - Utilize zod schemas for [CIRQL](https://cirql.starlane.studio/) if needed.
 
+## Documentation
+
+- User and maintainer docs: [`docs/`](./docs/README.md)
+- Contribution guide: [`CONTRIBUTING.md`](./CONTRIBUTING.md)
+
 ## 🚨 Warning Version 2.x
 
 Version 2 has breaking changes!  
@@ -21,11 +26,22 @@ The change was made, because it seems that `surrealdb` is closer to the SurrealD
 
 This means, the option "memory" for connections is no longer available, and you need to run against a real running SurrealDB instance (use docker).
 
+## Compatibility
+
+| Tool version | Runtime `surrealdb` SDK dependency | SurrealDB server | Generated client mode |
+| --- | --- | --- | --- |
+| 2.9.x | `surrealdb@^1.3.2` | 2.x only | SDK v1 |
+| 2.10.x | `surrealdb@^2.0.0` | 2.x and 3.x | SDK v1 by default, SDK v2 with `--sdkVersion 2` |
+
+Use `--surrealdbVersion 2` or `--surrealdbVersion 3` to tell schema-file mode which SurrealDB container generation to use when the default `surrealdb/surrealdb:latest` image is configured. Explicit `--surrealImage` values are preserved.
+
+Use `--sdkVersion 1` for generated clients targeting the v1 JavaScript SDK API, or `--sdkVersion 2` for generated clients targeting the v2 JavaScript SDK API.
+
 ## How It Works
 
-1. If you provide a surql schema file:
- - An in-memory SurrealDB instance is automatically created.
- - The schema is loaded into this temporary instance.
+1. If you provide a SurrealQL schema file or directory:
+ - A temporary SurrealDB instance is automatically created with Docker.
+ - The schema definitions are loaded into this temporary instance.
  - Docker is required to run the temporary instance.
 2. If no schema file is provided:
  - SurrealDB Schema Generator connects to your specified database.
@@ -81,6 +97,8 @@ Options:
   -g, --generateClient  generate client (default: true)
   --no-generateClient   no client generation
   -i, --surrealImage    SurrealDB docker image (default: surrealdb/surrealdb:latest)
+  --sdkVersion          generated SurrealDB SDK client API version: 1 or 2 (default: 1)
+  --surrealdbVersion    SurrealDB server major version for default schema-file Docker image: 2 or 3 (default: 2)
   
   -h, --help            display help for command
 ```
@@ -103,12 +121,14 @@ Example:
   "outputFolder": "./out",
   "generateClient": true,
   "lib": "surrealdb",
-  "surrealImage": "surrealdb/surrealdb:latest"
+  "surrealImage": "surrealdb/surrealdb:latest",
+  "sdkVersion": 1,
+  "surrealdbVersion": 2
   
 }
 ```
 
-## Using a Schema File
+## Using a Schema File or Directory
 > **_NOTE:_**  Docker is required to run SurrealDB in memory.
 
 To use a schema file either provide the -f flag:
@@ -123,7 +143,9 @@ or you can specify the path in the config file:
 }
 ```
 
-using a schema file utilises a temporary in-memory SurrealDB instance to generate the zod schemas; this instance runs in a docker container.
+You can also provide a directory path. The generator recursively loads `.surql` and `.surrealql` files from that directory. Add a `.ignore` file in the schema directory to exclude paths with glob-like patterns such as `migrations/**`.
+
+using a schema file or directory utilises a temporary in-memory SurrealDB instance to generate the zod schemas; this instance runs in a docker container.
 If you want to use a different image, you can specify it in the config file:
 ```json
 {

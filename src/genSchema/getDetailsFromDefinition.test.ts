@@ -339,4 +339,51 @@ describe('getDetailsFromDefinition', () => {
 			expect(result.zodString).toBe('z.object({}).passthrough()')
 		})
 	})
+
+	describe('COMPUTED fields', () => {
+		it('skips COMPUTED fields in input schema', () => {
+			const result = getDetailsFromDefinition(
+				'DEFINE FIELD fullName ON TABLE user TYPE string COMPUTED string::concat(firstName, " ", lastName)',
+				true,
+			)
+
+			expect(result.skip).toBe(true)
+			expect(result.computed).toBe('string::concat(firstName, " ", lastName)')
+		})
+
+		it('does not skip COMPUTED fields in output schema', () => {
+			const result = getDetailsFromDefinition(
+				'DEFINE FIELD fullName ON TABLE user TYPE string COMPUTED string::concat(firstName, " ", lastName)',
+				false,
+			)
+
+			expect(result.skip).toBe(false)
+			expect(result.zodString).toBe('z.string()')
+		})
+	})
+})
+
+describe('SurrealDB v3 introspection unions', () => {
+	it('maps none | int to an optional number', () => {
+		const input = getDetailsFromDefinition('DEFINE FIELD age ON person TYPE none | int PERMISSIONS FULL', true)
+		const output = getDetailsFromDefinition('DEFINE FIELD age ON person TYPE none | int PERMISSIONS FULL', false)
+
+		expect(input.zodString).toBe('z.number().optional()')
+		expect(output.zodString).toBe('z.number().optional()')
+	})
+
+	it('maps none | record<table> to an optional record schema', () => {
+		const input = getDetailsFromDefinition(
+			'DEFINE FIELD friend ON person TYPE none | record<person> PERMISSIONS FULL',
+			true,
+		)
+
+		expect(input.zodString).toBe("recordId('person').optional()")
+	})
+
+	it('maps null | string to an optional string', () => {
+		const input = getDetailsFromDefinition('DEFINE FIELD email ON person TYPE null | string PERMISSIONS FULL', true)
+
+		expect(input.zodString).toBe('z.string().optional()')
+	})
 })
