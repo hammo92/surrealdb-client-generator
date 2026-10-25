@@ -540,3 +540,61 @@ describe('Field schema generation', () => {
 		})
 	})
 })
+
+describe('clause boundaries in SurrealDB v3 INFO output', () => {
+	it('ends a literal union type at a trailing READONLY', () => {
+		const result = tokenize(
+			"DEFINE FIELD outcome ON approval_decision TYPE 'accepted' | 'rejected' READONLY PERMISSIONS FULL",
+		)
+		expect(result.type).toBe("'accepted' | 'rejected'")
+		expect(result.readonly).toBe(true)
+	})
+
+	it('does not read TYPE out of an identifier inside a VALUE expression', () => {
+		const result = tokenize(
+			"DEFINE FIELD is_subscription ON purchased VALUE order_type == 'subscription' PERMISSIONS FULL",
+		)
+		expect(result.type).toBeUndefined()
+		expect(result.value).toBe("order_type == 'subscription'")
+	})
+
+	it('does not read VALUE out of $value inside an ASSERT', () => {
+		const result = tokenize(
+			"DEFINE FIELD status ON refund TYPE string ASSERT $value INSIDE ['pending', 'failed'] PERMISSIONS FULL",
+		)
+		expect(result.type).toBe('string')
+		expect(result.value).toBeUndefined()
+		expect(result.assert).toBe("$value INSIDE ['pending', 'failed']")
+	})
+
+	it('reads FLEXIBLE after the type (v3) and before it (v1/v2)', () => {
+		const v3 = tokenize('DEFINE FIELD settings ON org TYPE none | object FLEXIBLE DEFAULT {  } PERMISSIONS FULL')
+		expect(v3.type).toBe('none | object')
+		expect(v3.flexible).toBe(true)
+		expect(v3.default).toBe('{  }')
+
+		const v2 = tokenize('DEFINE FIELD settings ON org FLEXIBLE TYPE object')
+		expect(v2.type).toBe('object')
+		expect(v2.flexible).toBe(true)
+	})
+
+	it('ignores keywords inside quotes and brackets', () => {
+		const result = tokenize(
+			"DEFINE FIELD label ON t TYPE string DEFAULT 'READONLY VALUE' ASSERT $value NOTINSIDE ['TYPE', (SELECT VALUE x FROM y)] COMMENT 'a VALUE'",
+		)
+		expect(result.type).toBe('string')
+		expect(result.default).toBe("'READONLY VALUE'")
+		expect(result.readonly).toBeUndefined()
+		expect(result.value).toBeUndefined()
+		expect(result.assert).toBe("$value NOTINSIDE ['TYPE', (SELECT VALUE x FROM y)]")
+		expect(result.comment).toBe("'a VALUE'")
+	})
+
+	it('keeps an IF block VALUE whole', () => {
+		const result = tokenize(
+			"DEFINE FIELD is_active ON purchased VALUE (IF order_type == 'subscription' { status INSIDE ['active'] } ELSE { false }) PERMISSIONS FULL",
+		)
+		expect(result.type).toBeUndefined()
+		expect(result.value).toBe("(IF order_type == 'subscription' { status INSIDE ['active'] } ELSE { false })")
+	})
+})

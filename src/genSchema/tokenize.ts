@@ -11,9 +11,6 @@ const FIELD_CLAUSES = [
 ] as const
 
 const PATTERNS = {
-	CLAUSE_BOUNDARY: `\\s+(?:${FIELD_CLAUSES.join('|')})\\s+|$`,
-	CAPTURE_UNTIL_NEXT_CLAUSE: (keyword: string) =>
-		new RegExp(`${keyword}\\s+(.*?)(?=${`\\s+(?:${FIELD_CLAUSES.join('|')})\\s+|$`})`, 'im'),
 	FOR_CLAUSE: /FOR\s+(select|create|update|delete)\s+([^FOR]*?)(?=\s+FOR\s+|$)/gim,
 	DEFINE_FIELD: /DEFINE FIELD(?: IF NOT EXISTS)?\s+((?:`[^`]+`|[^`])+?)\s+ON(?: TABLE)?\s+([\w.:`\-[\]*]+)/im,
 } as const
@@ -88,6 +85,88 @@ function parsePermissions(definition: string): [Permissions | undefined, string]
 	return [Object.keys(permissions).length ? permissions : undefined, remainingDef.trim()]
 }
 
+type ValueClause = Exclude<(typeof FIELD_CLAUSES)[number], 'READONLY' | 'PERMISSIONS'>
+
+type SplitClauses = Partial<Record<ValueClause, string>> & { flexible?: boolean; readonly?: boolean }
+
+const CLAUSE_KEYWORDS = [...FIELD_CLAUSES, 'FLEXIBLE'] as const
+
+/**
+ * Splits the part of a field definition after `ON <table>` into its clauses.
+ *
+ * A keyword starts a clause only outside quotes and brackets, after whitespace (or at the start) and
+ * before whitespace (or the end), and only the first time it appears, so `order_type`, `$value`,
+ * `'... READONLY'` or a `type` field read inside a VALUE expression never end a clause. `FLEXIBLE`
+ * is a flag in both positions SurrealDB has used: `FLEXIBLE TYPE object` (v1/v2) and
+ * `TYPE object FLEXIBLE` (v3 `INFO` output).
+ */
+export function splitClauses(segment: string): SplitClauses {
+	const result: SplitClauses = {}
+	const seen = new Set<string>()
+	let current: ValueClause | undefined
+	let bodyStart = 0
+	let quote: string | undefined
+	let depth = 0
+
+	const close = (endIndex: number) => {
+		if (!current) return
+		const body = segment.slice(bodyStart, endIndex).trim().replace(/;$/, '').trim()
+		if (body) result[current] = body
+		current = undefined
+	}
+
+	const keywordAt = (index: number): string | undefined => {
+		if (index > 0 && !/\s/.test(segment[index - 1] ?? '')) return undefined
+		for (const keyword of CLAUSE_KEYWORDS) {
+			const candidate = segment.slice(index, index + keyword.length)
+			const after = segment[index + keyword.length]
+			if (candidate.toUpperCase() !== keyword || (after !== undefined && !/[\s;]/.test(after))) continue
+			if (seen.has(keyword)) return undefined
+			const rest = segment.slice(index + keyword.length).trimStart()
+			if (keyword === 'COMMENT' && !/^['"]/.test(rest)) return undefined
+			if (keyword === 'PERMISSIONS' && !/^(?:NONE|FULL|FOR)\b/i.test(rest)) return undefined
+			return keyword
+		}
+		return undefined
+	}
+
+	for (let index = 0; index < segment.length; index++) {
+		const char = segment[index] as string
+		if (quote) {
+			if (char === '\\') index++
+			else if (char === quote) quote = undefined
+			continue
+		}
+		if (char === "'" || char === '"' || char === '`') {
+			quote = char
+			continue
+		}
+		if (char === '(' || char === '[' || char === '{') {
+			depth++
+			continue
+		}
+		if (char === ')' || char === ']' || char === '}') {
+			depth = Math.max(0, depth - 1)
+			continue
+		}
+		if (depth > 0) continue
+		const keyword = keywordAt(index)
+		if (!keyword) continue
+		close(index)
+		seen.add(keyword)
+		if (keyword === 'FLEXIBLE') result.flexible = true
+		else if (keyword === 'READONLY') result.readonly = true
+		else if (keyword !== 'PERMISSIONS') {
+			current = keyword as ValueClause
+			bodyStart = index + keyword.length
+		}
+		index += keyword.length - 1
+	}
+	close(segment.length)
+
+	return result
+}
+
 export const tokenize = (originalDefinition: string): TokenizedDefinition => {
 	const result: TokenizedDefinition = { name: '', table: '' }
 	let definition = originalDefinition.trim()
@@ -117,76 +196,34 @@ export const tokenize = (originalDefinition: string): TokenizedDefinition => {
 		remainingDefinitionAfterNameAndTable = definition.replace(defineFieldPartRegex, '').trim()
 	}
 
-	const currentDefinitionSegment = remainingDefinitionAfterNameAndTable
+	const clauses = splitClauses(remainingDefinitionAfterNameAndTable)
 
-	let typeValue: string | undefined
-	const flexibleTypeKeyword = 'FLEXIBLE TYPE'
-	const typeKeyword = 'TYPE'
-
-	const flexibleTypeIndex = currentDefinitionSegment.toUpperCase().indexOf(flexibleTypeKeyword)
-	const simpleTypeIndex = currentDefinitionSegment.toUpperCase().indexOf(typeKeyword)
-
-	if (flexibleTypeIndex !== -1 && (simpleTypeIndex === -1 || flexibleTypeIndex < simpleTypeIndex)) {
+	if (clauses.flexible) {
 		result.flexible = true
-		const typePattern = PATTERNS.CAPTURE_UNTIL_NEXT_CLAUSE(flexibleTypeKeyword)
-		const typeMatch = currentDefinitionSegment.match(typePattern)
-		if (typeMatch?.[1]) {
-			typeValue = typeMatch[1].trim()
-		}
-	} else if (simpleTypeIndex !== -1) {
-		const typePattern = PATTERNS.CAPTURE_UNTIL_NEXT_CLAUSE(typeKeyword)
-		const typeMatch = currentDefinitionSegment.match(typePattern)
-		if (typeMatch?.[1]) {
-			typeValue = typeMatch[1].trim()
-		}
 	}
-
-	if (typeValue) {
-		if (typeValue.endsWith(';')) {
-			typeValue = typeValue.slice(0, -1).trim()
-		}
-		result.type = typeValue
+	if (clauses.TYPE) {
+		result.type = clauses.TYPE
 	}
-
-	const defaultMatch = currentDefinitionSegment.match(PATTERNS.CAPTURE_UNTIL_NEXT_CLAUSE('DEFAULT'))
-	if (defaultMatch?.[1]) {
-		const defaultValue = defaultMatch[1].trim().replace(/;$/, '').trim()
-		const readonlyInDefaultMatch = defaultValue.toUpperCase().match(/(.*)\s+READONLY$/)
-		if (readonlyInDefaultMatch) {
-			result.default = readonlyInDefaultMatch[1]?.trim()
-			result.readonly = true
-		} else {
-			result.default = defaultValue
-		}
+	if (clauses.DEFAULT) {
+		result.default = clauses.DEFAULT
 	}
-
-	if (!result.readonly && currentDefinitionSegment.match(/\sREADONLY(\s|$)/i)) {
+	if (clauses.readonly) {
 		result.readonly = true
 	}
-
-	const valueMatch = currentDefinitionSegment.match(PATTERNS.CAPTURE_UNTIL_NEXT_CLAUSE('VALUE'))
-	if (valueMatch?.[1]) {
-		result.value = valueMatch[1].trim().replace(/;$/, '').trim()
+	if (clauses.VALUE) {
+		result.value = clauses.VALUE
 	}
-
-	const assertMatch = currentDefinitionSegment.match(PATTERNS.CAPTURE_UNTIL_NEXT_CLAUSE('ASSERT'))
-	if (assertMatch?.[1]) {
-		result.assert = assertMatch[1].trim().replace(/;$/, '').trim()
+	if (clauses.ASSERT) {
+		result.assert = clauses.ASSERT
 	}
-
-	const referenceMatch = currentDefinitionSegment.match(PATTERNS.CAPTURE_UNTIL_NEXT_CLAUSE('REFERENCE'))
-	if (referenceMatch?.[1]) {
-		result.reference = referenceMatch[1].trim().replace(/;$/, '').trim()
+	if (clauses.REFERENCE) {
+		result.reference = clauses.REFERENCE
 	}
-
-	const commentMatch = currentDefinitionSegment.match(PATTERNS.CAPTURE_UNTIL_NEXT_CLAUSE('COMMENT'))
-	if (commentMatch?.[1]) {
-		result.comment = commentMatch[1].trim().replace(/;$/, '').trim()
+	if (clauses.COMMENT) {
+		result.comment = clauses.COMMENT
 	}
-
-	const computedMatch = currentDefinitionSegment.match(PATTERNS.CAPTURE_UNTIL_NEXT_CLAUSE('COMPUTED'))
-	if (computedMatch?.[1]) {
-		result.computed = computedMatch[1].trim().replace(/;$/, '').trim()
+	if (clauses.COMPUTED) {
+		result.computed = clauses.COMPUTED
 	}
 
 	return result
