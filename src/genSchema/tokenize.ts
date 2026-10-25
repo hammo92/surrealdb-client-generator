@@ -1,3 +1,5 @@
+import { splitTopLevel } from './splitTopLevel.js'
+
 const FIELD_CLAUSES = [
 	'TYPE',
 	'REFERENCE',
@@ -11,7 +13,6 @@ const FIELD_CLAUSES = [
 ] as const
 
 const PATTERNS = {
-	FOR_CLAUSE: /FOR\s+(select|create|update|delete)\s+([^FOR]*?)(?=\s+FOR\s+|$)/gim,
 	DEFINE_FIELD: /DEFINE FIELD(?: IF NOT EXISTS)?\s+((?:`[^`]+`|[^`])+?)\s+ON(?: TABLE)?\s+([\w.:`\-[\]*]+)/im,
 } as const
 
@@ -39,53 +40,31 @@ export interface TokenizedDefinition {
 	computed?: string
 }
 
-function findNextClause(str: string, startIndex: number): number {
-	const matches = FIELD_CLAUSES.map(clause => {
-		const regex = new RegExp(`\\s+${clause}(\\s+|$)`, 'i')
-		const match = regex.exec(str.substring(startIndex))
-		return match ? match.index + startIndex : Number.POSITIVE_INFINITY
-	})
-
-	const nextIndex = Math.min(...matches)
-	return nextIndex === Number.POSITIVE_INFINITY ? -1 : nextIndex
-}
-
-function parsePermissions(definition: string): [Permissions | undefined, string] {
-	const permKeyword = 'PERMISSIONS'
-	const permIndex = definition.toUpperCase().indexOf(` ${permKeyword} `)
-
-	if (permIndex === -1) {
-		return [undefined, definition]
-	}
-
-	const nextClauseActualIndex = findNextClause(definition, permIndex + ` ${permKeyword} `.length)
-	const permSection =
-		nextClauseActualIndex === -1 ? definition.slice(permIndex) : definition.slice(permIndex, nextClauseActualIndex)
+/**
+ * Parses a PERMISSIONS clause body: `NONE`, `FULL`, or `FOR select WHERE ..., FOR create, update WHERE ...`.
+ * Commas inside an expression's brackets do not separate operations.
+ */
+function parsePermissions(body: string): Permissions | undefined {
+	if (/^NONE$/i.test(body)) return { none: true }
+	if (/^FULL$/i.test(body)) return { full: true }
 
 	const permissions: Permissions = {}
-	const remainingDef =
-		definition.slice(0, permIndex) + (nextClauseActualIndex !== -1 ? definition.slice(nextClauseActualIndex) : '')
-
-	if (permSection.match(new RegExp(`\\s${permKeyword}\\s+NONE\\b`, 'i'))) {
-		permissions.none = true
-		return [permissions, remainingDef.trim()]
-	}
-
-	if (permSection.match(new RegExp(`\\s${permKeyword}\\s+FULL\\b`, 'i'))) {
-		permissions.full = true
-	}
-
-	const forMatches = Array.from(permSection.matchAll(PATTERNS.FOR_CLAUSE))
-	for (const match of forMatches) {
-		const [, operation, expression] = match
-		if (operation && expression) {
-			permissions[operation.toLowerCase() as PermissionOperation] = expression.trim()
+	let pending: PermissionOperation[] = []
+	for (const rawPart of splitTopLevel(body, ',')) {
+		const part = rawPart.replace(/^FOR\s+/i, '')
+		const match = part.match(/^(select|create|update|delete)\b\s*([\s\S]*)$/i)
+		if (!match) continue
+		pending.push(match[1]?.toLowerCase() as PermissionOperation)
+		const expression = match[2]?.trim()
+		if (expression) {
+			for (const operation of pending) permissions[operation] = expression
+			pending = []
 		}
 	}
-	return [Object.keys(permissions).length ? permissions : undefined, remainingDef.trim()]
+	return Object.keys(permissions).length ? permissions : undefined
 }
 
-type ValueClause = Exclude<(typeof FIELD_CLAUSES)[number], 'READONLY' | 'PERMISSIONS'>
+type ValueClause = Exclude<(typeof FIELD_CLAUSES)[number], 'READONLY'>
 
 type SplitClauses = Partial<Record<ValueClause, string>> & { flexible?: boolean; readonly?: boolean }
 
@@ -156,7 +135,7 @@ export function splitClauses(segment: string): SplitClauses {
 		seen.add(keyword)
 		if (keyword === 'FLEXIBLE') result.flexible = true
 		else if (keyword === 'READONLY') result.readonly = true
-		else if (keyword !== 'PERMISSIONS') {
+		else {
 			current = keyword as ValueClause
 			bodyStart = index + keyword.length
 		}
@@ -169,13 +148,7 @@ export function splitClauses(segment: string): SplitClauses {
 
 export const tokenize = (originalDefinition: string): TokenizedDefinition => {
 	const result: TokenizedDefinition = { name: '', table: '' }
-	let definition = originalDefinition.trim()
-
-	const [permissions, defWithoutPerms] = parsePermissions(definition)
-	if (permissions && Object.keys(permissions).length > 0) {
-		result.permissions = permissions
-	}
-	definition = defWithoutPerms
+	const definition = originalDefinition.trim()
 
 	const nameMatch = definition.match(PATTERNS.DEFINE_FIELD)
 	let remainingDefinitionAfterNameAndTable = definition
@@ -224,6 +197,10 @@ export const tokenize = (originalDefinition: string): TokenizedDefinition => {
 	}
 	if (clauses.COMPUTED) {
 		result.computed = clauses.COMPUTED
+	}
+	const permissions = clauses.PERMISSIONS ? parsePermissions(clauses.PERMISSIONS) : undefined
+	if (permissions) {
+		result.permissions = permissions
 	}
 
 	return result

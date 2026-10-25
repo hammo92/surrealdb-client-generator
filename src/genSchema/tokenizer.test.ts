@@ -598,3 +598,32 @@ describe('clause boundaries in SurrealDB v3 INFO output', () => {
 		expect(result.value).toBe("(IF order_type == 'subscription' { status INSIDE ['active'] } ELSE { false })")
 	})
 })
+
+describe('field PERMISSIONS', () => {
+	it('does not end the permission clause at a SELECT VALUE inside it', () => {
+		const result = tokenize(
+			"DEFINE FIELD email ON user TYPE string ASSERT string::is_email($value) PERMISSIONS FOR select WHERE id = $auth.id OR (SELECT VALUE out.organisation FROM has_role WHERE in = $parent.id) CONTAINSANY (SELECT VALUE out.organisation FROM has_role WHERE in = $auth.id), FOR create, update WHERE $access = 'system'",
+		)
+		expect(result.type).toBe('string')
+		expect(result.assert).toBe('string::is_email($value)')
+		expect(result.value).toBeUndefined()
+		expect(result.permissions).toEqual({
+			select:
+				'WHERE id = $auth.id OR (SELECT VALUE out.organisation FROM has_role WHERE in = $parent.id) CONTAINSANY (SELECT VALUE out.organisation FROM has_role WHERE in = $auth.id)',
+			create: "WHERE $access = 'system'",
+			update: "WHERE $access = 'system'",
+		})
+	})
+
+	it('reads FULL and NONE', () => {
+		expect(tokenize('DEFINE FIELD a ON t TYPE string PERMISSIONS FULL').permissions).toEqual({ full: true })
+		expect(tokenize('DEFINE FIELD a ON t TYPE string PERMISSIONS NONE').permissions).toEqual({ none: true })
+	})
+
+	it('keeps letters F, O and R in permission expressions', () => {
+		const result = tokenize(
+			'DEFINE FIELD a ON t TYPE string PERMISSIONS FOR select WHERE fn::permission::check(organisation)',
+		)
+		expect(result.permissions).toEqual({ select: 'WHERE fn::permission::check(organisation)' })
+	})
+})
