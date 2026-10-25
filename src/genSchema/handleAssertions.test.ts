@@ -322,3 +322,30 @@ describe('handleAssertions', () => {
 		})
 	})
 })
+
+describe('handleAssertions with state-transition guards', () => {
+	it('keeps the value set and ignores the transition guard', () => {
+		const assertion =
+			"$value INSIDE ['pending', 'processing', 'succeeded', 'failed'] AND ($before = NONE OR $value = $before OR $before = 'processing' AND $value INSIDE ['succeeded', 'failed'])"
+		expect(handleAssertions('z.string()', assertion, 'string')).toBe(
+			"z.enum(['pending', 'processing', 'succeeded', 'failed'])",
+		)
+	})
+
+	it('ignores a guard that is a top-level disjunction', () => {
+		const assertion =
+			"$before = NONE AND $value = 'received' OR $value = $before OR $before INSIDE ['received'] AND $value INSIDE ['reading']"
+		expect(handleAssertions('z.string()', assertion, 'string')).toBe('z.string()')
+	})
+
+	it('ignores conditions on $before or on another field', () => {
+		expect(handleAssertions('z.number()', '$before = NONE AND $value >= 0', 'number')).toBe('z.number().min(0)')
+		expect(handleAssertions('z.string()', "source INSIDE ['manual', 'import']", 'string')).toBe('z.string()')
+	})
+
+	it('splits only at AND as a word, outside strings', () => {
+		expect(handleAssertions('z.string()', "$value INSIDE ['BRAND', 'A AND B']", 'string')).toBe(
+			"z.enum(['BRAND', 'A AND B'])",
+		)
+	})
+})

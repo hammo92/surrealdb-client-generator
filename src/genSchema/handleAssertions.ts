@@ -1,3 +1,5 @@
+import { splitTopLevelOperator, unwrapParentheses } from './splitTopLevel.js'
+
 const COMPARISON_OPERATORS = ['<=', '<', '>=', '>', '=', '=='] as const
 type ComparisonOperator = (typeof COMPARISON_OPERATORS)[number]
 
@@ -140,7 +142,7 @@ const handleStringAssertions = (schema: string, condition: string): string => {
 	}
 
 	if (processedCondition.includes('NOT IN') || processedCondition.includes('NOTINSIDE')) {
-		const notInMatch = processedCondition.match(/(NOT IN|NOTINSIDE)\s*(\[.*?])/)
+		const notInMatch = processedCondition.match(/^(?:\$value\s+)?(NOT IN|NOTINSIDE)\s*(\[.*?])/)
 		if (notInMatch?.[2]) {
 			const values = cleanEnumArray(notInMatch[2].trim())
 			return `${schema}.refine((val) => !${values}.includes(val), {
@@ -148,12 +150,12 @@ const handleStringAssertions = (schema: string, condition: string): string => {
         })`
 		}
 	} else if (processedCondition.includes('INSIDE')) {
-		const insideMatch = processedCondition.match(/INSIDE\s*(\[.*?])/)
+		const insideMatch = processedCondition.match(/^(?:\$value\s+)?(?:ALL)?INSIDE\s*(\[.*?])/)
 		if (insideMatch?.[1]) {
 			return `z.enum(${cleanEnumArray(insideMatch[1].trim())})`
 		}
 	} else if (processedCondition.includes('IN')) {
-		const inMatch = processedCondition.match(/\bIN\s*(\[.*?])/)
+		const inMatch = processedCondition.match(/^(?:\$value\s+)?IN\s*(\[.*?])/)
 		if (inMatch?.[1]) {
 			return `z.enum(${cleanEnumArray(inMatch[1].trim())})`
 		}
@@ -248,12 +250,23 @@ const handleArrayAssertions = (schema: string, condition: string): string => {
 	return newSchema
 }
 
+/**
+ * Applies the conditions of an ASSERT that constrain the value on its own. The assertion is split at
+ * top-level `AND`s; a condition with a top-level `OR` (a state-transition guard such as
+ * `$before = NONE OR $before = 'a' AND $value INSIDE ['b']`) or one that reads `$before`/`$after` says
+ * nothing about every value of the field, so it is skipped rather than turned into the field's enum.
+ */
 export const handleAssertions = (schema: string, assertion: string, schemaType: SchemaType): string => {
-	const conditions = assertion.split(/AND|&&/)
+	// AND binds tighter than OR: a top-level OR makes the whole assertion a disjunction.
+	const expression = unwrapParentheses(stripNullablePrefix(assertion.trim()))
+	if (splitTopLevelOperator(expression, ['OR', '||']).length > 1) return schema
+	const conditions = splitTopLevelOperator(expression, ['AND', '&&'])
 
 	return conditions.reduce((acc, condition) => {
-		const con = condition.trim()
+		const con = unwrapParentheses(stripNullablePrefix(condition.trim()))
 		if (!con) return acc
+		if (splitTopLevelOperator(con, ['OR', '||']).length > 1) return acc
+		if (/\$(?:before|after)\b/.test(con)) return acc
 		switch (schemaType) {
 			case 'string':
 				return handleStringAssertions(acc, con)
