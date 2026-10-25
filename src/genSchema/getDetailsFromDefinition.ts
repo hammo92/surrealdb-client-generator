@@ -30,18 +30,72 @@ const KNOWN_TYPES = [
 	'geometry',
 ] as const
 
-const typeRegex = /(?:option<)?(\w+)(?:<([^<>]+(?:<[^<>]+>)?)>)?/i
+/** Splits on `separator` outside `<>`, `[]`, `()`, `{}` and quotes, so `none | array<record<a> | record<b>>` is two parts. */
+export const splitTopLevel = (value: string, separator: '|' | ','): string[] => {
+	const parts: string[] = []
+	let depth = 0
+	let quote: string | undefined
+	let start = 0
+	for (let index = 0; index < value.length; index++) {
+		const char = value[index] as string
+		if (quote) {
+			if (char === '\\') index++
+			else if (char === quote) quote = undefined
+			continue
+		}
+		if (char === "'" || char === '"' || char === '`') quote = char
+		else if ('<[({'.includes(char)) depth++
+		else if ('>])}'.includes(char)) depth = Math.max(0, depth - 1)
+		else if (char === separator && depth === 0) {
+			parts.push(value.slice(start, index).trim())
+			start = index + 1
+		}
+	}
+	parts.push(value.slice(start).trim())
+	return parts.filter(part => part.length > 0)
+}
+
+/** The top-level arguments of `keyword<...>` (`array<string, 10>` → `['string', '10']`), or undefined. */
+const genericArguments = (type: string | undefined, keyword: string): string[] | undefined => {
+	const match = type?.trim().match(new RegExp(`^(?:option<)?${keyword}<`, 'i'))
+	if (!type || !match) return undefined
+	const trimmed = type.trim()
+	let depth = 0
+	for (let index = match[0].length - 1; index < trimmed.length; index++) {
+		const char = trimmed[index]
+		if (char === '<') depth++
+		else if (char === '>' && --depth === 0) return splitTopLevel(trimmed.slice(match[0].length, index), ',')
+	}
+	return undefined
+}
+
+const isStringLiteral = (part: string) =>
+	(part.startsWith('"') && part.endsWith('"')) || (part.startsWith("'") && part.endsWith("'"))
+
+const isNumberLiteral = (part: string) => /^-?\d+(?:\.\d+)?$/.test(part)
+
+const unquoteLiteral = (part: string) =>
+	part.slice(1, -1).replace(/\\"/g, '"').replace(/\\'/g, "'").replace(/\\\\/g, '\\')
+
+const enumSchema = (values: string[]) =>
+	`z.enum([${values.map(v => `'${v.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`).join(', ')}])`
+
+/** `record`, `record<a>` or `record<a | b>` (one `recordId` per table). */
+const recordSchema = (type: string | undefined) => {
+	const tables = genericArguments(type, 'record')?.[0]
+	if (!tables) return 'recordId()'
+	const names = splitTopLevel(tables, '|')
+	return names.length === 1
+		? `recordId('${names[0]}')`
+		: `z.union([${names.map(name => `recordId('${name}')`).join(', ')}])`
+}
 
 const getArrayType = (tokens: TokenizedDefinition, isInputSchema: boolean): string => {
-	const match = tokens.type?.match(typeRegex)
+	const elementType = genericArguments(tokens.type, 'array')?.[0]
 
-	if (match?.[2]) {
-		const elementType = match[2]
-
+	if (elementType) {
 		if (elementType.toLowerCase() === 'record') {
-			const recordMatch = elementType.match(/record(?:<(\w+)>)?/i)
-			const recordType = recordMatch?.[1]
-			return recordType ? `recordId('${recordType}').array()` : 'recordId().array()'
+			return 'recordId().array()'
 		}
 
 		const recordTypeMatch = elementType.match(/^record<(\w+)>$/i)
@@ -61,12 +115,12 @@ const getArrayType = (tokens: TokenizedDefinition, isInputSchema: boolean): stri
 }
 
 const getSetType = (tokens: TokenizedDefinition, isInputSchema: boolean): string => {
-	const setMatch = tokens.type?.match(/set(?:<([^,>]+)(?:,\s*(\d+))?>)?/i)
+	const elementType = genericArguments(tokens.type, 'set')?.[0]
 
-	if (setMatch?.[1]) {
+	if (elementType) {
 		const innerTypeDefinition: TokenizedDefinition = {
 			...tokens,
-			type: setMatch[1],
+			type: elementType,
 			default: undefined,
 		}
 		const innerType = getZodTypeFromQLType(innerTypeDefinition, isInputSchema)
@@ -109,12 +163,8 @@ const getSchemaForType = (type: string, tokens: TokenizedDefinition, isInputSche
 			return 'z.boolean()'
 		case 'object':
 			return subSchema ?? 'z.object({})'
-		case 'record': {
-			const recordRegex = /record(?:<(\w+)>)?/i
-			const recordMatch = tokens.type?.match(recordRegex)
-			const recordType = recordMatch?.[1]
-			return recordType ? `recordId('${recordType}')` : 'recordId()'
-		}
+		case 'record':
+			return recordSchema(tokens.type)
 		case 'duration':
 			return 'z.string()'
 		case 'uuid':
@@ -163,45 +213,32 @@ export const getZodTypeFromQLType = (
 		typeStringToProcess = typeStringToProcess.substring('option<'.length, typeStringToProcess.length - 1)
 	}
 
-	if (typeStringToProcess.includes('|')) {
-		const unionParts = typeStringToProcess.split('|').map(part => part.trim())
+	const unionParts = splitTopLevel(typeStringToProcess, '|')
+	if (unionParts.length > 1) {
 		const nullableUnionParts = unionParts.filter(part => ['none', 'null'].includes(part.toLowerCase()))
 		if (nullableUnionParts.length && nullableUnionParts.length < unionParts.length) {
 			const nonNullableParts = unionParts.filter(part => !['none', 'null'].includes(part.toLowerCase()))
-			const schemas = nonNullableParts.map(part => {
-				const partTokens: TokenizedDefinition = { ...tokens, type: part }
-				return getZodTypeFromQLType(partTokens, isInputSchema)
-			})
-			const schema = schemas.length === 1 ? schemas[0] : `z.union([${schemas.join(', ')}])`
+			const partTokens: TokenizedDefinition = { ...tokens, type: nonNullableParts.join(' | ') }
+			const schema = getZodTypeFromQLType(partTokens, isInputSchema)
 			return schema.endsWith('.optional()') ? schema : `${schema}.optional()`
 		}
 
-		// Check for quoted string literals (enum values)
-		const allLiterals = unionParts.every(
-			part => (part.startsWith('"') && part.endsWith('"')) || (part.startsWith("'") && part.endsWith("'")),
-		)
-
-		if (allLiterals) {
-			const enumValues = unionParts.map(part => {
-				const stripped = part.slice(1, -1)
-				return stripped.replace(/\\"/g, '"').replace(/\\'/g, "'").replace(/\\\\/g, '\\')
-			})
-			let schema = `z.enum([${enumValues.map(v => `'${v.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`).join(', ')}])`
-			schema = makeOptional(schema, tokens, isInputSchema)
-			return schema
+		// Quoted string literals (enum values)
+		if (unionParts.every(isStringLiteral)) {
+			return makeOptional(enumSchema(unionParts.map(unquoteLiteral)), tokens, isInputSchema)
 		}
 
 		// Check if all parts are known types (e.g., uuid | int)
-		const typeKeywordRegex = /^(?:option<)?([\w]+)(?:<[^>]+>)?$/i
+		const typeKeywordRegex = /^(?:option<)?([\w]+)(?:<.*>)?$/i
 		const allKnownTypes = unionParts.every(part => {
 			const match = part.match(typeKeywordRegex)
-			return match ? KNOWN_TYPES.includes(match[1].toLowerCase() as (typeof KNOWN_TYPES)[number]) : false
+			return match?.[1] ? KNOWN_TYPES.includes(match[1].toLowerCase() as (typeof KNOWN_TYPES)[number]) : false
 		})
 
 		// If not all known types, check for unquoted enum values (e.g., published | draft | archived)
 		if (!allKnownTypes) {
 			const allUnquotedIdentifiers = unionParts.every(part => /^[A-Za-z0-9_-]+$/.test(part))
-			if (allUnquotedIdentifiers) {
+			if (allUnquotedIdentifiers && !unionParts.every(isNumberLiteral)) {
 				let schema = `z.enum([${unionParts.map(v => `'${v}'`).join(', ')}])`
 				if (isExplicitlyOptional) {
 					schema += '.optional()'
@@ -210,16 +247,30 @@ export const getZodTypeFromQLType = (
 			}
 		}
 
-		// Handle as union of types
-		const unionSchemas = unionParts.map(part => {
-			const partTokens: TokenizedDefinition = { ...tokens, type: part }
-			return getZodTypeFromQLType(partTokens, isInputSchema)
-		})
-		let schema = `z.union([${unionSchemas.join(', ')}])`
-		if (isExplicitlyOptional) {
-			schema += '.optional()'
-		}
-		return schema
+		// Handle as union of types; string literals among them become one enum
+		const stringLiterals = unionParts.filter(isStringLiteral)
+		const unionSchemas = [
+			...(stringLiterals.length ? [enumSchema(stringLiterals.map(unquoteLiteral))] : []),
+			...unionParts
+				.filter(part => !isStringLiteral(part))
+				.map(part => {
+					const partTokens: TokenizedDefinition = { ...tokens, type: part, default: undefined }
+					return getZodTypeFromQLType(partTokens, false)
+				}),
+		]
+		const schema = makeOptional(`z.union([${unionSchemas.join(', ')}])`, tokens, isInputSchema)
+		return isExplicitlyOptional && !schema.endsWith('.optional()') ? `${schema}.optional()` : schema
+	}
+
+	if (isNumberLiteral(typeStringToProcess)) {
+		return makeOptional(`z.literal(${typeStringToProcess})`, tokens, isInputSchema)
+	}
+
+	if (typeStringToProcess.startsWith('[') && typeStringToProcess.endsWith(']')) {
+		const elements = splitTopLevel(typeStringToProcess.slice(1, -1), ',').map(element =>
+			getZodTypeFromQLType({ ...tokens, type: element, default: undefined, value: undefined }, false),
+		)
+		return makeOptional(`z.tuple([${elements.join(', ')}])`, tokens, isInputSchema)
 	}
 
 	if (typeStringToProcess.startsWith('range<') && typeStringToProcess.endsWith('>')) {
@@ -269,35 +320,6 @@ export const getZodTypeFromQLType = (
 				schema = makeOptional(schema, tokens, isInputSchema)
 				return schema
 			}
-		} else {
-			const parts = typeStringToProcess
-				.split('|')
-				.map(p => p.trim())
-				.filter(p => p)
-			if (parts.length > 1) {
-				// Check for unquoted enum values first (e.g., published | draft | archived)
-				if (parts.every(p => /^[A-Za-z0-9_-]+$/.test(p))) {
-					let schema = `z.enum([${parts.map(v => `'${v}'`).join(', ')}])`
-					schema = makeOptional(schema, tokens, isInputSchema)
-					return schema
-				}
-
-				// Check for union of known types (e.g., string | number)
-				const typeKeywordRegex = /^(?:option<)?([\w]+)(?:<[^>]+>)?$/i
-				const allTypes = parts.every(part => {
-					const match = part.match(typeKeywordRegex)
-					return match ? KNOWN_TYPES.includes(match[1].toLowerCase() as (typeof KNOWN_TYPES)[number]) : false
-				})
-				if (allTypes) {
-					const schemas = parts.map(part => {
-						const subTokens: TokenizedDefinition = { ...tokens, type: part }
-						return getZodTypeFromQLType(subTokens, isInputSchema)
-					})
-					let schema = `z.union([${schemas.join(', ')}])`
-					schema = makeOptional(schema, tokens, isInputSchema)
-					return schema
-				}
-			}
 		}
 	}
 
@@ -337,9 +359,14 @@ export const shouldFieldBeSkipped = (tokens: TokenizedDefinition, isInputSchema:
 
 export const getDetailsFromDefinition = (definition: string, isInputSchema: boolean): FieldDetail => {
 	const tokens = tokenize(definition)
+	// `DEFINE FIELD id ... TYPE [record<a>, uuid]` types the key; the field itself is a record id of the table.
+	const zodString =
+		tokens.name === 'id' && tokens.table
+			? `recordId('${tokens.table}')${isInputSchema ? '.optional()' : ''}`
+			: getZodTypeFromQLType(tokens, isInputSchema)
 	return {
 		...tokens,
-		zodString: getZodTypeFromQLType(tokens, isInputSchema),
+		zodString,
 		skip: shouldFieldBeSkipped(tokens, isInputSchema),
 	}
 }

@@ -412,3 +412,74 @@ describe('integer fields', () => {
 		)
 	})
 })
+
+describe('SurrealDB v3 type shapes', () => {
+	const out = (definition: string) => getDetailsFromDefinition(definition, false).zodString
+	const input = (definition: string) => getDetailsFromDefinition(definition, true).zodString
+
+	it('maps a record link to one of several tables to a union of record ids', () => {
+		expect(out('DEFINE FIELD out ON comments_on TYPE record<recipe | post> PERMISSIONS FULL')).toBe(
+			"z.union([recordId('recipe'), recordId('post')])",
+		)
+		expect(out('DEFINE FIELD target ON t TYPE none | record<hazard | incident> PERMISSIONS FULL')).toBe(
+			"z.union([recordId('hazard'), recordId('incident')]).optional()",
+		)
+		expect(out('DEFINE FIELD target ON t TYPE array<record<hazard | incident>> PERMISSIONS FULL')).toBe(
+			"z.array(z.union([recordId('hazard'), recordId('incident')]))",
+		)
+	})
+
+	it('splits unions only at the top level', () => {
+		expect(out('DEFINE FIELD liked ON t TYPE none | array<record<recipe> | record<post>> PERMISSIONS FULL')).toBe(
+			"z.array(z.union([recordId('recipe'), recordId('post')])).optional()",
+		)
+		expect(out("DEFINE FIELD tags ON t TYPE none | array<'main' | 'side'> PERMISSIONS FULL")).toBe(
+			"z.array(z.enum(['main', 'side'])).optional()",
+		)
+		expect(out("DEFINE FIELD tags ON t TYPE array<'Sk' | 'Sen'> PERMISSIONS FULL")).toBe(
+			"z.array(z.enum(['Sk', 'Sen']))",
+		)
+	})
+
+	it('keeps a nullable union of literals as one enum', () => {
+		expect(out("DEFINE FIELD stage ON t TYPE none | 'intake' | 'quotation' READONLY PERMISSIONS FULL")).toBe(
+			"z.enum(['intake', 'quotation']).optional()",
+		)
+	})
+
+	it('groups the string literals of a mixed union into one enum', () => {
+		expect(out("DEFINE FIELD kind ON t TYPE 'ANY' | 'STRING' | array<'ANY' | 'STRING'> PERMISSIONS FULL")).toBe(
+			"z.union([z.enum(['ANY', 'STRING']), z.array(z.enum(['ANY', 'STRING']))])",
+		)
+	})
+
+	it('maps numeric literal types to literals', () => {
+		expect(out('DEFINE FIELD revision ON t TYPE 1 DEFAULT 1 READONLY PERMISSIONS FULL')).toBe('z.literal(1)')
+		expect(input('DEFINE FIELD revision ON t TYPE 1 DEFAULT 1 READONLY PERMISSIONS FULL')).toBe(
+			'z.literal(1).optional()',
+		)
+		expect(out('DEFINE FIELD level ON t TYPE 1 | 2 PERMISSIONS FULL')).toBe('z.union([z.literal(1), z.literal(2)])')
+	})
+
+	it('maps a tuple type to z.tuple', () => {
+		expect(out('DEFINE FIELD pair ON t TYPE [record<organisation>, uuid] PERMISSIONS FULL')).toBe(
+			"z.tuple([recordId('organisation'), z.string().uuid()])",
+		)
+	})
+
+	it('maps an id field with a typed key to a record id of its table', () => {
+		const definition = 'DEFINE FIELD id ON auth_event TYPE [none | record<user>, datetime] PERMISSIONS FULL'
+		expect(out(definition)).toBe("recordId('auth_event')")
+		expect(input(definition)).toBe("recordId('auth_event').optional()")
+	})
+
+	it('makes a mixed union with a default optional once in input schemas', () => {
+		expect(input("DEFINE FIELD v ON t TYPE string | int DEFAULT 'x' PERMISSIONS FULL")).toBe(
+			'z.union([z.string(), z.number().int()]).optional()',
+		)
+	})
+
+	it('reads the element type of a sized array', () => {
+		expect(out('DEFINE FIELD v ON t TYPE array<string, 10> PERMISSIONS FULL')).toBe('z.array(z.string())')
+	})
+})
