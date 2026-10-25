@@ -1,3 +1,4 @@
+import { generateZodSchemaCode } from './generateZodSchemaCode.js'
 import { getDetailsFromDefinition } from './getDetailsFromDefinition.js'
 
 describe('getDetailsFromDefinition', () => {
@@ -481,5 +482,30 @@ describe('SurrealDB v3 type shapes', () => {
 
 	it('reads the element type of a sized array', () => {
 		expect(out('DEFINE FIELD v ON t TYPE array<string, 10> PERMISSIONS FULL')).toBe('z.array(z.string())')
+	})
+})
+
+describe('none | X is option<X>', () => {
+	const both = (type: string, rest = '') =>
+		[false, true].map(
+			input => getDetailsFromDefinition(`DEFINE FIELD f ON t TYPE ${type}${rest} PERMISSIONS FULL`, input).zodString,
+		)
+
+	it('matches option<X> with and without a default', () => {
+		expect(both('none | array<record<asset>>', ' DEFAULT []')).toEqual(
+			both('option<array<record<asset>>>', ' DEFAULT []'),
+		)
+		expect(both('none | object', ' DEFAULT {  }')).toEqual(both('option<object>', ' DEFAULT {  }'))
+		expect(both('none | string')).toEqual(both('option<string>'))
+	})
+
+	it('keeps a defaulted none | X required in output schemas, so its default applies', () => {
+		const field = getDetailsFromDefinition(
+			'DEFINE FIELD images ON recipe TYPE none | array<record<asset>> DEFAULT [] PERMISSIONS FULL',
+			false,
+		)
+		expect(field.zodString).toBe("recordId('asset').array()")
+		expect(generateZodSchemaCode([field], 's')).toContain("images: recordId('asset').array().default([])")
+		expect(both('none | string')).toEqual(['z.string().optional()', 'z.string().optional()'])
 	})
 })

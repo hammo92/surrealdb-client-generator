@@ -194,9 +194,12 @@ export const getZodTypeFromQLType = (
 		const nullableUnionParts = unionParts.filter(part => ['none', 'null'].includes(part.toLowerCase()))
 		if (nullableUnionParts.length && nullableUnionParts.length < unionParts.length) {
 			const nonNullableParts = unionParts.filter(part => !['none', 'null'].includes(part.toLowerCase()))
-			const partTokens: TokenizedDefinition = { ...tokens, type: nonNullableParts.join(' | ') }
-			const schema = getZodTypeFromQLType(partTokens, isInputSchema)
-			return schema.endsWith('.optional()') ? schema : `${schema}.optional()`
+			// `none | X` is how SurrealDB 3 writes `option<X>`, so it is optional exactly when `option<X>` is:
+			// always in input schemas, and in output schemas only without a DEFAULT.
+			const innerType = nonNullableParts.join(' | ')
+			const partTokens: TokenizedDefinition = { ...tokens, type: innerType }
+			const schema = getZodTypeFromQLType(partTokens, isInputSchema).replace(/\.optional\(\)$/, '')
+			return makeOptional(schema, { ...tokens, type: `option<${innerType}>` }, isInputSchema)
 		}
 
 		// Quoted string literals (enum values)
