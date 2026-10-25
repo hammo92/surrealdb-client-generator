@@ -32,6 +32,25 @@ const normalizeNumericDefault = (value: string) => {
 	return numericMatch?.[1]
 }
 
+/** The `.default(...)` call for a literal DEFAULT, or '' when SurrealDB computes the value. */
+const defaultCall = (rawDefault: string): string => {
+	const defaultValue = rawDefault.replace(/^ALWAYS\s+/i, '')
+	const isQuoted = isQuotedStringLiteral(defaultValue)
+	const sanitizedDefault = defaultValue.replace(/^["']|["']$/g, '')
+	const numericDefault = !isQuoted ? normalizeNumericDefault(sanitizedDefault) : undefined
+	if (isQuoted) return `.default("${sanitizedDefault.replace(/"/g, '\\"')}")`
+	if (numericDefault !== undefined) return `.default(${numericDefault})`
+	if (
+		sanitizedDefault === 'null' ||
+		sanitizedDefault === 'true' ||
+		sanitizedDefault === 'false' ||
+		isLiteralCollection(sanitizedDefault)
+	) {
+		return `.default(${sanitizedDefault})`
+	}
+	return ''
+}
+
 export const generateZodSchemaCode = (fields: FieldDetail[], schemaName: string): string => {
 	// biome-ignore lint/suspicious/noExplicitAny: ok here
 	const buildSchema = (fieldMap: { [key: string]: any }, fields: FieldDetail[]) => {
@@ -70,22 +89,7 @@ export const generateZodSchemaCode = (fields: FieldDetail[], schemaName: string)
 					}
 					let zodString = field.zodString
 					if (field.default !== undefined && field.default !== null && !field.zodString.includes('.optional()')) {
-						const defaultValue = field.default.replace(/^ALWAYS\s+/i, '')
-						const isQuoted = isQuotedStringLiteral(defaultValue)
-						const sanitizedDefault = defaultValue.replace(/^["']|["']$/g, '')
-						const numericDefault = !isQuoted ? normalizeNumericDefault(sanitizedDefault) : undefined
-						if (isQuoted) {
-							zodString += `.default("${sanitizedDefault.replace(/"/g, '\\"')}")`
-						} else if (numericDefault !== undefined) {
-							zodString += `.default(${numericDefault})`
-						} else if (
-							sanitizedDefault === 'null' ||
-							sanitizedDefault === 'true' ||
-							sanitizedDefault === 'false' ||
-							isLiteralCollection(sanitizedDefault)
-						) {
-							zodString += `.default(${sanitizedDefault})`
-						}
+						zodString += defaultCall(field.default)
 					}
 					current[part] = zodString
 				} else {
@@ -137,6 +141,9 @@ export const generateZodSchemaCode = (fields: FieldDetail[], schemaName: string)
 
 				if (allOptional || isOptionalFromSchema) {
 					objectSchema += '.optional()'
+				} else if (fieldSchema?.default !== undefined) {
+					// An object built from its sub-fields keeps its own literal DEFAULT (`DEFAULT {  }`).
+					objectSchema += defaultCall(fieldSchema.default)
 				}
 
 				return `${quotedKey}: ${objectSchema}`

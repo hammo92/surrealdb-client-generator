@@ -370,3 +370,30 @@ describe('Default values that SurrealDB computes', () => {
 		)
 	})
 })
+
+describe('Defaults of objects built from sub-fields', () => {
+	it('keeps the literal DEFAULT of a required parent object', () => {
+		const schema = generateZodSchemaCode(
+			[
+				getDetailsFromDefinition('DEFINE FIELD meta ON t TYPE none | object DEFAULT {  } PERMISSIONS FULL', false),
+				getDetailsFromDefinition(
+					'DEFINE FIELD meta.created_at ON t READONLY VALUE time::now() PERMISSIONS FULL',
+					false,
+				),
+			],
+			's',
+		)
+		expect(schema).toMatch(/meta: z\.object\(\{\s*created_at: z\.any\(\)\s*\}\)\.default\(\{ {2}\}\)/)
+	})
+
+	it('adds nothing for a computed parent default', () => {
+		const schema = generateZodSchemaCode(
+			[
+				getDetailsFromDefinition('DEFINE FIELD meta ON t TYPE object DEFAULT fn::meta() PERMISSIONS FULL', false),
+				getDetailsFromDefinition('DEFINE FIELD meta.a ON t TYPE string PERMISSIONS FULL', false),
+			],
+			's',
+		)
+		expect(schema).not.toContain('.default(')
+	})
+})
