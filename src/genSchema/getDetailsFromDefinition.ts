@@ -99,9 +99,10 @@ const getSchemaForType = (type: string, tokens: TokenizedDefinition, isInputSche
 			return getSetType(tokens, isInputSchema)
 		case 'array':
 			return getArrayType(tokens, isInputSchema)
+		case 'int':
+			return 'z.number().int()'
 		case 'number':
 		case 'float':
-		case 'int':
 		case 'decimal':
 			return 'z.number()'
 		case 'bool':

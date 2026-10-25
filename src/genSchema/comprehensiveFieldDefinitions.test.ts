@@ -88,7 +88,7 @@ describe('Comprehensive Field Definition Tests', () => {
 	describe('Complex type definitions', () => {
 		it('should handle union types', () => {
 			const result = getDetailsFromDefinition('DEFINE FIELD user_id ON TABLE user TYPE uuid | int;', false)
-			expect(result.zodString).toBe('z.union([z.string().uuid(), z.number()])')
+			expect(result.zodString).toBe('z.union([z.string().uuid(), z.number().int()])')
 		})
 
 		it('should handle literal types', () => {
@@ -182,7 +182,7 @@ describe('Comprehensive Field Definition Tests', () => {
 				'DEFINE FIELD num ON TABLE data TYPE int ASSERT { IF $value % 2 = 0 { RETURN true } ELSE { THROW "Number must be even" } };',
 				false,
 			)
-			expect(result.zodString).toBe('z.number()')
+			expect(result.zodString).toBe('z.number().int()')
 		})
 	})
 

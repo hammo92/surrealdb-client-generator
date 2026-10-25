@@ -236,12 +236,12 @@ describe('getDetailsFromDefinition', () => {
 
 		it('handles union of types', () => {
 			const result = getDetailsFromDefinition('DEFINE FIELD uid ON account TYPE uuid | int;', false)
-			expect(result.zodString).toBe('z.union([z.string().uuid(), z.number()])')
+			expect(result.zodString).toBe('z.union([z.string().uuid(), z.number().int()])')
 		})
 
 		it('handles option<union of types>', () => {
 			const result = getDetailsFromDefinition('DEFINE FIELD uid ON account TYPE option<uuid | int>;', false)
-			expect(result.zodString).toBe('z.union([z.string().uuid(), z.number()]).optional()')
+			expect(result.zodString).toBe('z.union([z.string().uuid(), z.number().int()]).optional()')
 		})
 	})
 
@@ -364,12 +364,12 @@ describe('getDetailsFromDefinition', () => {
 })
 
 describe('SurrealDB v3 introspection unions', () => {
-	it('maps none | int to an optional number', () => {
+	it('maps none | int to an optional integer', () => {
 		const input = getDetailsFromDefinition('DEFINE FIELD age ON person TYPE none | int PERMISSIONS FULL', true)
 		const output = getDetailsFromDefinition('DEFINE FIELD age ON person TYPE none | int PERMISSIONS FULL', false)
 
-		expect(input.zodString).toBe('z.number().optional()')
-		expect(output.zodString).toBe('z.number().optional()')
+		expect(input.zodString).toBe('z.number().int().optional()')
+		expect(output.zodString).toBe('z.number().int().optional()')
 	})
 
 	it('maps none | record<table> to an optional record schema', () => {
@@ -385,5 +385,30 @@ describe('SurrealDB v3 introspection unions', () => {
 		const input = getDetailsFromDefinition('DEFINE FIELD email ON person TYPE null | string PERMISSIONS FULL', true)
 
 		expect(input.zodString).toBe('z.string().optional()')
+	})
+})
+
+describe('integer fields', () => {
+	it('maps int to an integer schema and keeps float, decimal and number unconstrained', () => {
+		expect(getDetailsFromDefinition('DEFINE FIELD n ON t TYPE int PERMISSIONS FULL', false).zodString).toBe(
+			'z.number().int()',
+		)
+		expect(getDetailsFromDefinition('DEFINE FIELD n ON t TYPE int DEFAULT 0 PERMISSIONS FULL', false).zodString).toBe(
+			'z.number().int()',
+		)
+		expect(getDetailsFromDefinition('DEFINE FIELD n ON t TYPE int DEFAULT 0 PERMISSIONS FULL', true).zodString).toBe(
+			'z.number().int().optional()',
+		)
+		for (const type of ['float', 'decimal', 'number']) {
+			expect(getDetailsFromDefinition(`DEFINE FIELD n ON t TYPE ${type} PERMISSIONS FULL`, false).zodString).toBe(
+				'z.number()',
+			)
+		}
+	})
+
+	it('maps array<int> to an array of integers', () => {
+		expect(getDetailsFromDefinition('DEFINE FIELD n ON t TYPE array<int> PERMISSIONS FULL', false).zodString).toBe(
+			'z.array(z.number().int())',
+		)
 	})
 })
