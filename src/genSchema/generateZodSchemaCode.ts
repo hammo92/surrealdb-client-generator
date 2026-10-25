@@ -135,6 +135,11 @@ export const generateZodSchemaCode = (fields: FieldDetail[], schemaName: string)
 				const fieldSchema = fields.find(f => f.name === fullKey)
 				const isOptionalFromSchema = fieldSchema?.zodString.includes('.optional()')
 
+				// A FLEXIBLE object keeps the keys its sub-fields do not declare.
+				if (fieldSchema?.flexible) {
+					objectSchema += '.passthrough()'
+				}
+
 				if (isArray) {
 					objectSchema += '.array()'
 				}

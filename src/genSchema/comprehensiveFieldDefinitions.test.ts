@@ -397,3 +397,29 @@ describe('Defaults of objects built from sub-fields', () => {
 		expect(schema).not.toContain('.default(')
 	})
 })
+
+describe('FLEXIBLE objects built from sub-fields', () => {
+	it('keeps undeclared keys of a flexible parent', () => {
+		const fields = [
+			getDetailsFromDefinition(
+				'DEFINE FIELD provider_ref ON asset TYPE none | object FLEXIBLE PERMISSIONS FULL',
+				false,
+			),
+			getDetailsFromDefinition(
+				'DEFINE FIELD provider_ref.playback_shown_at ON asset TYPE none | datetime PERMISSIONS FULL',
+				false,
+			),
+		]
+		expect(generateZodSchemaCode(fields, 's')).toMatch(
+			/provider_ref: z\.object\(\{\s*playback_shown_at: z\.string\(\)\.datetime\(\)\.optional\(\)\s*\}\)\.passthrough\(\)\.optional\(\)/,
+		)
+	})
+
+	it('leaves a parent that is not flexible strict', () => {
+		const fields = [
+			getDetailsFromDefinition('DEFINE FIELD meta ON t TYPE object PERMISSIONS FULL', false),
+			getDetailsFromDefinition('DEFINE FIELD meta.a ON t TYPE string PERMISSIONS FULL', false),
+		]
+		expect(generateZodSchemaCode(fields, 's')).not.toContain('passthrough')
+	})
+})
