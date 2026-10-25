@@ -300,7 +300,9 @@ describe('Comprehensive Field Definition Tests', () => {
 		})
 
 		it('should preserve quoted numeric string default values', () => {
-			const fields = [getDetailsFromDefinition('DEFINE FIELD version ON TABLE content TYPE string DEFAULT "1.0";', false)]
+			const fields = [
+				getDetailsFromDefinition('DEFINE FIELD version ON TABLE content TYPE string DEFAULT "1.0";', false),
+			]
 			const schema = generateZodSchemaCode(fields, 'contentSchema')
 			expect(schema).toContain('.default("1.0")')
 		})
@@ -329,5 +331,42 @@ describe('Comprehensive Field Definition Tests', () => {
 			expect(schema).not.toContain('.default(')
 			expect(schema).toContain('.optional()')
 		})
+	})
+})
+
+describe('Default values that SurrealDB computes', () => {
+	const schemaFor = (definition: string) => generateZodSchemaCode([getDetailsFromDefinition(definition, false)], 's')
+
+	it('adds no .default() for an expression default', () => {
+		for (const definition of [
+			'DEFINE FIELD created_at ON t TYPE datetime DEFAULT time::now() PERMISSIONS FULL',
+			'DEFINE FIELD owner ON t TYPE record<user> DEFAULT $auth PERMISSIONS FULL',
+			'DEFINE FIELD currency ON t TYPE record<currency> DEFAULT currency:GBP PERMISSIONS FULL',
+			"DEFINE FIELD slug ON t TYPE string DEFAULT string::concat('product-', rand::string(8)) PERMISSIONS FULL",
+			'DEFINE FIELD region ON t TYPE record<region> DEFAULT region:["GB", "south"] PERMISSIONS FULL',
+			'DEFINE FIELD stamps ON t TYPE array<datetime> DEFAULT [time::now()] PERMISSIONS FULL',
+		]) {
+			expect(schemaFor(definition)).not.toContain('.default(')
+		}
+	})
+
+	it('keeps literal array and object defaults', () => {
+		expect(
+			schemaFor("DEFINE FIELD roles ON t TYPE array<string> DEFAULT ['admin', 'member'] PERMISSIONS FULL"),
+		).toContain(".default(['admin', 'member'])")
+		expect(schemaFor('DEFINE FIELD view ON t TYPE object DEFAULT { x: 0, y: 0, zoom: 1 } PERMISSIONS FULL')).toContain(
+			'.default({ x: 0, y: 0, zoom: 1 })',
+		)
+		expect(schemaFor('DEFINE FIELD meta ON t TYPE object DEFAULT {  } PERMISSIONS FULL')).toContain('.default({  })')
+	})
+
+	it('keeps a quoted string that looks like a collection as a string', () => {
+		expect(schemaFor("DEFINE FIELD raw ON t TYPE string DEFAULT '[]' PERMISSIONS FULL")).toContain('.default("[]")')
+	})
+
+	it('keeps a DEFAULT ALWAYS field and its literal default', () => {
+		expect(schemaFor('DEFINE FIELD attempts ON t TYPE int DEFAULT ALWAYS 0 PERMISSIONS FULL')).toContain(
+			'attempts: z.number().int().default(0)',
+		)
 	})
 })

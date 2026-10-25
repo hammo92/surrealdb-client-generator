@@ -12,6 +12,21 @@ const createArraySuffixRegex = (key: string) => {
 const isQuotedStringLiteral = (value: string) =>
 	(value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))
 
+/**
+ * True for an array or object default written only with literals (`[]`, `{  }`, `['a', 'b']`,
+ * `{ x: 0, unit: 'days' }`), which is also a JavaScript literal. A default that computes its value
+ * (`time::now()`, `$auth`, `currency:GBP`, `<string> ...`) is not, and gets no `.default()`.
+ */
+const isLiteralCollection = (value: string) => {
+	if (!/^[[{]/.test(value)) return false
+	const withoutStrings = value.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g, '0')
+	if (!/^[\s[\]{},:\-\w.]*$/.test(withoutStrings)) return false
+	return withoutStrings
+		.replace(/\b[A-Za-z_]\w*\s*:/g, '0:')
+		.split(/[\s[\]{},:]+/)
+		.every(word => word === '' || /^-?\d+(?:\.\d+)?$/.test(word) || ['true', 'false', 'null'].includes(word))
+}
+
 const normalizeNumericDefault = (value: string) => {
 	const numericMatch = value.match(/^(-?\d+(?:\.\d+)?)(?:f|dec)?$/i)
 	return numericMatch?.[1]
@@ -55,27 +70,21 @@ export const generateZodSchemaCode = (fields: FieldDetail[], schemaName: string)
 					}
 					let zodString = field.zodString
 					if (field.default !== undefined && field.default !== null && !field.zodString.includes('.optional()')) {
-						const defaultValue = field.default
-						if (defaultValue === 'ALWAYS' || defaultValue.startsWith('ALWAYS ')) {
-							continue
-						}
+						const defaultValue = field.default.replace(/^ALWAYS\s+/i, '')
 						const isQuoted = isQuotedStringLiteral(defaultValue)
 						const sanitizedDefault = defaultValue.replace(/^["']|["']$/g, '')
 						const numericDefault = !isQuoted ? normalizeNumericDefault(sanitizedDefault) : undefined
-						if (
-							sanitizedDefault === '[]' ||
-							sanitizedDefault === '{}' ||
+						if (isQuoted) {
+							zodString += `.default("${sanitizedDefault.replace(/"/g, '\\"')}")`
+						} else if (numericDefault !== undefined) {
+							zodString += `.default(${numericDefault})`
+						} else if (
 							sanitizedDefault === 'null' ||
 							sanitizedDefault === 'true' ||
 							sanitizedDefault === 'false' ||
-							sanitizedDefault.startsWith('[') ||
-							sanitizedDefault.startsWith('{')
+							isLiteralCollection(sanitizedDefault)
 						) {
 							zodString += `.default(${sanitizedDefault})`
-						} else if (numericDefault !== undefined) {
-							zodString += `.default(${numericDefault})`
-						} else {
-							zodString += `.default("${sanitizedDefault.replace(/"/g, '\\"')}")`
 						}
 					}
 					current[part] = zodString
